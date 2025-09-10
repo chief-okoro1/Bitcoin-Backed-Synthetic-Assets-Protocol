@@ -382,3 +382,109 @@
     (ok claim-id)
   )
 )
+;; Review an insurance claim - governance only
+(define-public (review-insurance-claim (claim-id uint) (approve bool))
+  (begin
+    (asserts! (is-eq tx-sender (var-get governance-address)) ERR-NOT-AUTHORIZED)
+    
+    (match (map-get? insurance-claims { claim-id: claim-id })
+      claim-data
+      (begin
+        (if approve
+          (begin
+            ;; Calculate payout amount based on coverage ratio
+            (let 
+              (
+                (payout-amount (/ (* (get amount claim-data) (var-get insurance-coverage-ratio)) u100))
+              )
+              ;; Check if insurance fund has enough balance
+              (asserts! (<= payout-amount (var-get insurance-fund-balance)) ERR-INSUFFICIENT-COLLATERAL)
+              
+              ;; Update insurance fund balance
+              (var-set insurance-fund-balance (- (var-get insurance-fund-balance) payout-amount))
+              
+              ;; In a real implementation, this would transfer the payout to the claimant
+              ;; For this example, we're just updating the claim status
+              
+              ;; Update claim status
+              (map-set insurance-claims
+                { claim-id: claim-id }
+                (merge claim-data { status: "approved" })
+              )
+              
+              (ok payout-amount)
+            )
+          )
+          (begin
+            ;; Reject the claim
+            (map-set insurance-claims
+              { claim-id: claim-id }
+              (merge claim-data { status: "rejected" })
+            )
+            (ok u0)
+          )
+        )
+      )
+      ERR-INSURANCE-CLAIM-REJECTED
+    )
+  )
+)
+
+
+;; Get insurance fund details
+(define-public (get-insurance-fund-info)
+  (ok {
+    balance: (var-get insurance-fund-balance),
+    premium-rate: (var-get insurance-premium-rate),
+    coverage-ratio: (var-get insurance-coverage-ratio)
+  })
+)
+
+;; Define trading pairs
+(define-map trading-pairs
+  { pair-id: uint }
+  {
+    asset-a-id: uint,
+    asset-b-id: uint,
+    reserve-a: uint,
+    reserve-b: uint,
+    fee: uint, ;; in basis points (1/100 of a percent)
+    is-active: bool
+  }
+)
+
+(define-data-var pair-counter uint u0)
+
+;; Create a new trading pair
+(define-public (create-trading-pair (asset-a-id uint) (asset-b-id uint) (fee uint))
+  (begin
+    (asserts! (is-eq tx-sender (var-get governance-address)) ERR-NOT-AUTHORIZED)
+    (asserts! (is-asset-supported asset-a-id) ERR-ASSET-NOT-SUPPORTED)
+    (asserts! (is-asset-supported asset-b-id) ERR-ASSET-NOT-SUPPORTED)
+    (asserts! (not (is-eq asset-a-id asset-b-id)) ERR-INVALID-AMOUNT)
+    (asserts! (<= fee u1000) ERR-INVALID-AMOUNT) ;; Max fee of 10%
+    
+    (let 
+      (
+        (pair-id (var-get pair-counter))
+      )
+      ;; Create the pair
+      (map-set trading-pairs
+        { pair-id: pair-id }
+        {
+          asset-a-id: asset-a-id,
+          asset-b-id: asset-b-id,
+          reserve-a: u0,
+          reserve-b: u0,
+          fee: fee,
+          is-active: true
+        }
+      )
+      
+      ;; Increment pair counter
+      (var-set pair-counter (+ pair-id u1))
+      
+      (ok pair-id)
+    )
+  )
+)
