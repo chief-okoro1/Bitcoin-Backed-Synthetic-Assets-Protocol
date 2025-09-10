@@ -300,3 +300,18 @@
     )
   )
 )
+
+;; Get the current price with validation
+(define-public (query-price (asset-id uint))
+  (begin
+    (match (map-get? asset-prices { asset-id: asset-id })
+      price-data
+      (begin
+        (asserts! (< (- stacks-block-height (get last-update price-data)) ORACLE-PRICE-EXPIRY) ERR-PRICE-EXPIRED)
+        (ok (get price price-data))
+      )
+      ERR-ORACLE-DATA-UNAVAILABLE
+    )
+  )
+)
+
