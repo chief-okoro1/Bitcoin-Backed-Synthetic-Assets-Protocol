@@ -578,3 +578,146 @@
     )
   )
 )
+
+;; Flash loan data
+(define-map flash-loans
+  { loan-id: uint }
+  {
+    borrower: principal,
+    asset-id: uint,
+    amount: uint,
+    fee: uint,
+    is-active: bool,
+    timestamp: uint
+  }
+)
+
+(define-data-var flash-loan-counter uint u0)
+(define-data-var flash-loan-fee-rate uint u9) ;; 0.09% fee
+
+;; Execute a flash loan
+(define-public (flash-loan (asset-id uint) (amount uint) (callback-contract principal) (callback-function (string-ascii 128)))
+  (begin
+    (asserts! (not (var-get protocol-paused)) ERR-NOT-AUTHORIZED)
+    (asserts! (> amount u0) ERR-INVALID-AMOUNT)
+    (asserts! (is-asset-supported asset-id) ERR-ASSET-NOT-SUPPORTED)
+    
+    (let
+      (
+        (loan-id (var-get flash-loan-counter))
+        (loan-fee (/ (* amount (var-get flash-loan-fee-rate)) u10000))
+      )
+      ;; Check if there's enough liquidity
+      (match (map-get? liquidity-pools { asset-id: asset-id })
+        pool-data
+        (begin
+          (asserts! (>= (get synthetic-balance pool-data) amount) ERR-POOL-INSUFFICIENT-LIQUIDITY)
+          
+          ;; Create the flash loan
+          (map-set flash-loans
+            { loan-id: loan-id }
+            {
+              borrower: tx-sender,
+              asset-id: asset-id,
+              amount: amount,
+              fee: loan-fee,
+              is-active: true,
+              timestamp: stacks-block-height
+            }
+          )
+          
+          ;; Increment loan counter
+          (var-set flash-loan-counter (+ loan-id u1))
+          
+          ;; In a real implementation, this would:
+          ;; 1. Transfer the borrowed assets to the borrower
+          ;; 2. Call the callback function on the callback contract
+          ;; 3. Verify that the borrowed amount + fee has been repaid
+          ;; 4. If not repaid, revert the transaction
+          
+          ;; For this example, we're just updating the loan status
+          (map-set flash-loans
+            { loan-id: loan-id }
+            {
+              borrower: tx-sender,
+              asset-id: asset-id,
+              amount: amount,
+              fee: loan-fee,
+              is-active: false,
+              timestamp: stacks-block-height
+            }
+          )
+          
+          ;; Add the fee to the protocol fees
+          (var-set total-protocol-fees (+ (var-get total-protocol-fees) loan-fee))
+          
+          (ok loan-id)
+        )
+        ERR-POOL-INSUFFICIENT-LIQUIDITY
+      )
+    )
+  )
+)
+
+(define-map limit-orders
+  { order-id: uint }
+  {
+    owner: principal,
+    pair-id: uint,
+    is-buy: bool, ;; true = buy asset-a with asset-b, false = sell asset-a for asset-b
+    amount: uint,
+    price: uint, ;; in terms of asset-b per asset-a * PRECISION_FACTOR
+    filled-amount: uint,
+    status: (string-ascii 10), ;; "open", "filled", "cancelled"
+    expiration: uint
+  }
+)
+
+(define-data-var order-counter uint u0)
+
+;; Create a limit order
+(define-public (create-limit-order (pair-id uint) (is-buy bool) (amount uint) (price uint) (expiration uint))
+  (begin
+    (asserts! (not (var-get protocol-paused)) ERR-NOT-AUTHORIZED)
+    (asserts! (> amount u0) ERR-INVALID-AMOUNT)
+    (asserts! (> price u0) ERR-INVALID-AMOUNT)
+    (asserts! (> expiration stacks-block-height) ERR-INVALID-AMOUNT)
+    
+    (match (map-get? trading-pairs { pair-id: pair-id })
+      pair-data
+      (begin
+        (asserts! (get is-active pair-data) ERR-TRADING-PAIR-NOT-FOUND)
+        
+        (let
+          (
+            (order-id (var-get order-counter))
+            (required-balance (* amount price))
+          )
+          ;; In a real implementation, this would check that the user has the required balance
+          ;; and lock the funds for the duration of the order
+          
+          ;; Create the order
+          (map-set limit-orders
+            { order-id: order-id }
+            {
+              owner: tx-sender,
+              pair-id: pair-id,
+              is-buy: is-buy,
+              amount: amount,
+              price: price,
+              filled-amount: u0,
+              status: "open",
+              expiration: expiration
+            }
+          )
+          
+          ;; Increment order counter
+          (var-set order-counter (+ order-id u1))
+          
+          (ok order-id)
+        )
+      )
+      ERR-TRADING-PAIR-NOT-FOUND
+    )
+  )
+)
